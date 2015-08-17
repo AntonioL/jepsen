@@ -8,6 +8,7 @@
                     [control :as c]
                     [checker :as checker]
                     [generator :as gen]
+                    [model     :as model]
                     [util :refer [timeout]]]
             [jepsen.control.util :as cu]
             [jepsen.os.debian :as debian]
@@ -47,22 +48,42 @@
 (defn set-client []
   (SetClient. nil))
 
-(defn writes []
+(defn w []
   {:type  :invoke
    :f     :add
    :value (rand-int 10000)})
 
-(defn reads []
-  {:type  :invoke
-   :f     :read
-   :value nil})
+(defn r []
+  {:type :invoke :f :read})
 
 (defn generator []
-  (gen/mix [(writes) (writes) (writes) (reads)]))
+  (gen/mix [(w) (w) (w) (r)]))
 
-(def test-skeleton
+;Shamefully almost copied from MongoDB test
+(defn std-gen [gen]
+  (gen/phases
+    (->> gen
+         (gen/delay 1)
+         (gen/nemesis
+           (gen/seq (cycle [(gen/sleep 60)
+                            {:type :info :f :stop}
+                            {:type :info :f :start}])))
+         (gen/time-limit 300))
+    (gen/nemesis
+      (gen/once {:type :info :f :stop}))
+    (gen/clients
+      (gen/once (r)))))
+
+(defn test-skeleton [name]
   (assoc tests/noop-test
-         :name    "OrientDB Test"
+         :name    (str "orientdb " name) 
          :os      debian/os
-         :db      db/noop))
+         :db      (db/noop)))
 
+(def test-linearizability
+  (assoc (test-skeleton "linearizability test 1")
+    :model      (model/set)
+    :client     (set-client)
+    :checker    (checker/set)
+    :generator  (std-gen (gen/mix [(w) (w) (w) (r)]))
+    :nemesis    (nemesis/partition-halves)))
